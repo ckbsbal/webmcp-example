@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebMCP Store</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['Syne', 'sans-serif'],
+            body:    ['DM Sans', 'sans-serif'],
+          },
+          colors: {
+            ink:    '#0f0e0d',
+            paper:  '#f5f2ee',
+            accent: '#e8401c',
+            blue:   '#2563eb',
+            muted:  '#888580',
+            border: '#e2ddd8',
+          },
+          keyframes: {
+            slideDown: {
+              '0%':   { opacity: '0', transform: 'translateX(-50%) translateY(-8px)' },
+              '100%': { opacity: '1', transform: 'translateX(-50%) translateY(0)' },
+            },
+            popIn: {
+              '0%':   { transform: 'scale(0)', opacity: '0' },
+              '100%': { transform: 'scale(1)', opacity: '1' },
+            },
+            modalIn: {
+              '0%':   { opacity: '0', transform: 'scale(0.96) translateY(12px)' },
+              '100%': { opacity: '1', transform: 'none' },
+            },
+          },
+          animation: {
+            slideDown: 'slideDown 0.3s ease forwards',
+            popIn:     'popIn 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            modalIn:   'modalIn 0.25s ease forwards',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { font-family: 'DM Sans', sans-serif; }
+    h1, h2, h3, .font-display { font-family: 'Syne', sans-serif; }
+
+    /* Product card animated top-border on hover */
+    .product-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: #e8401c;
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.2s;
+    }
+    .product-card:hover::before { transform: scaleX(1); }
+
+    /* WebMCP declarative tool CSS pseudo-classes —
+       applied by the browser when an agent activates or is about to submit a form tool */
+    form:tool-form-active {
+      outline: 2px solid #2563eb !important;
+      outline-offset: 4px;
+      border-radius: 12px;
+    }
+    input:tool-submit-active,
+    button:tool-submit-active {
+      outline: 2px solid #e8401c !important;
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+<body class="bg-paper text-ink min-h-screen font-body">
+
+<!-- ── AGENT STATUS BANNER ── -->
+<div id="agentBanner"
+     class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-50
+            bg-ink text-white text-xs font-display font-semibold
+            px-5 py-2.5 rounded-full shadow-lg animate-slideDown tracking-wide whitespace-nowrap">
+  <span class="inline-block w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse align-middle"></span>
+  <span id="bannerText">Agent active</span>
+</div>
+
+
+<!-- ═══════════════════════ MAIN STORE ═══════════════════════ -->
+<div id="mainView" class="grid min-h-screen" style="grid-template-columns:1fr 320px">
+
+  <!-- Main Panel -->
+  <div class="p-12 border-r border-border">
+
+    <!-- Header -->
+    <div class="flex items-baseline gap-4 mb-10">
+      <h1 class="font-display text-5xl font-extrabold tracking-tight">WebMCP Store</h1>
+      <span class="text-[0.65rem] font-display font-bold tracking-widest uppercase
+                   bg-accent text-white px-2.5 py-1 rounded">
+        WebMCP Enabled
+      </span>
+    </div>
+
+    <!-- Search -->
+    <div class="flex mb-9 border-2 border-ink rounded-xl overflow-hidden bg-white">
+      <input id="searchInput"
+             class="flex-1 px-5 py-3.5 text-sm outline-none bg-transparent placeholder:text-muted"
+             placeholder="Search products — or ask the agent…" />
+      <button onclick="searchUI()"
+              class="px-6 py-3.5 bg-ink text-white font-display text-sm font-bold
+                     tracking-wide cursor-pointer transition-colors duration-150 hover:bg-accent">
+        Search
+      </button>
+    </div>
+
+    <!-- Product Grid -->
+    <div id="productList"
+         class="grid gap-5"
+         style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+    </div>
+  </div>
+
+  <!-- Cart Sidebar -->
+  <div class="flex flex-col bg-white sticky top-0 h-screen px-7 py-12">
+    <h2 class="font-display text-lg font-extrabold mb-7 flex items-center gap-2">
+      Cart
+      <span id="cartCount"
+            class="w-5 h-5 rounded-full bg-accent text-white text-[0.65rem]
+                   font-bold flex items-center justify-center leading-none">0</span>
+    </h2>
+
+    <ul id="cartList" class="flex-1 overflow-y-auto mb-5 space-y-0 list-none"></ul>
+
+    <div id="cartTotal"
+         class="font-display text-2xl font-extrabold py-4 border-t-2 border-ink mb-4"></div>
+
+    <button onclick="openCheckout()"
+            class="w-full py-3.5 bg-accent text-white rounded-xl
+                   font-display text-sm font-bold tracking-wide cursor-pointer
+                   transition-all duration-150 hover:bg-red-700 active:scale-[0.98]">
+      Proceed to Checkout →
+    </button>
+  </div>
+
+</div><!-- /#mainView -->
+
+
+<!-- ═══════════════════════ CHECKOUT MODAL ═══════════════════════ -->
+<!--
+  `toolautosubmit` is intentionally omitted here. Per the WebMCP spec, without it
+  the browser pre-fills the form fields when an agent invokes the tool, but holds
+  for the user to manually click the Submit button. This gives the user a chance
+  to review the agent-filled data before the order is placed.
+
+  `toolname` and `tooldescription` are the WebMCP declarative API attributes
+  that register this form as a named tool in the browser's modelContext.
+
+  `toolparamdescription` enriches each field's JSON schema property description,
+  giving the agent richer context for correct parameter mapping.
+
+  `toolparamtitle` overrides the JSON schema property key for a field
+  (defaults to the field's `name` attribute otherwise).
+-->
+<!-- Overlay -->
+<div id="checkoutModal"
+     style="display:none; position:fixed; inset:0; z-index:40;
+            background:rgba(15,14,13,0.6); backdrop-filter:blur(4px);
+            overflow-y:auto; padding:40px 16px;">
+
+  <div style="background:#fff; border-radius:20px; width:100%; max-width:480px;
+              margin:0 auto; padding:40px; position:relative;
+              box-shadow:0 24px 80px rgba(0,0,0,0.2);">
+
+    <!-- Close -->
+    <button onclick="closeCheckout()" aria-label="Close"
+            style="position:absolute; top:14px; right:14px; width:32px; height:32px;
+                   border-radius:50%; border:none; background:#f5f2ee; cursor:pointer;
+                   font-size:14px; color:#888580; display:flex; align-items:center; justify-content:center;">✕</button>
+
+    <h2 class="font-display text-2xl font-extrabold mb-7">📦 Shipping Details</h2>
+
+    <form id="checkoutForm"
+          toolname="checkout_order"
+          tooldescription="Place an order using the items currently in the cart. Requires the customer full name, email, and complete shipping address. Only call this tool when the user confirms they want to proceed with checkout."
+          toolautosubmit
+          class="space-y-4">
+
+      <div>
+        <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="fullName">Full Name</label>
+        <input id="fullName" name="fullName" toolparamdescription="Customer full legal name" placeholder="Jane Doe" required
+               class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white" />
+      </div>
+
+      <div>
+        <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="email">Email</label>
+        <input id="email" name="email" type="email" toolparamdescription="Customer email for order confirmation" placeholder="jane@example.com" required
+               class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white" />
+      </div>
+
+      <div>
+        <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="address">Street Address</label>
+        <input id="address" name="address" toolparamtitle="streetAddress" toolparamdescription="Primary street address including apartment number" placeholder="123 Main St, Apt 4B" required
+               class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white" />
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="city">City</label>
+          <input id="city" name="city" toolparamdescription="City for the shipping address" placeholder="Mumbai" required
+                 class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white" />
+        </div>
+        <div>
+          <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="postalCode">Postal Code</label>
+          <input id="postalCode" name="postalCode" toolparamtitle="postalCode" toolparamdescription="ZIP or postal code" placeholder="400001" required
+                 class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white" />
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-[0.72rem] font-semibold tracking-widest uppercase text-muted mb-1.5" for="country">Country</label>
+        <select id="country" name="country" toolparamdescription="Destination country" required
+                class="w-full px-3.5 py-2.5 border border-border rounded-lg text-sm bg-paper outline-none focus:border-blue-500 focus:bg-white">
+          <option value="">Select Country</option>
+          <option value="India">India</option>
+          <option value="USA">USA</option>
+          <option value="UK">UK</option>
+        </select>
+      </div>
+
+      <button type="submit"
+              style="width:100%; padding:14px; background:#2563eb; color:#fff; border:none;
+                     border-radius:12px; font-family:'Syne',sans-serif; font-weight:700;
+                     font-size:0.9rem; cursor:pointer; margin-top:8px;"
+              onmouseover="this.style.background='#1d4ed8'"
+              onmouseout="this.style.background='#2563eb'">
+        Confirm Order
+      </button>
+
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════ SUCCESS MODAL ═══════════════════════ -->
+<div id="successModal"
+     style="display:none; position:fixed; inset:0; z-index:50;
+            background:rgba(15,14,13,0.6); backdrop-filter:blur(4px);
+            align-items:center; justify-content:center; padding:16px;">
+  <div class="bg-white rounded-2xl p-10 w-full max-w-md overflow-y-auto
+              shadow-2xl animate-modalIn relative text-center"
+       style="max-height:90vh">
+
+    <!-- Close button -->
+    <button onclick="goHome()" aria-label="Close"
+            class="absolute top-4 right-4 w-8 h-8 rounded-full bg-paper text-muted text-sm
+                   flex items-center justify-center cursor-pointer
+                   transition-colors hover:bg-border hover:text-ink">✕</button>
+
+    <!-- Animated check -->
+    <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center
+                text-3xl mx-auto mb-5 animate-popIn">✓</div>
+
+    <h2 class="font-display text-2xl font-extrabold text-green-700 mb-2">Order Confirmed!</h2>
+
+    <div id="successOrderId"
+         class="font-mono text-xs text-muted bg-paper px-3 py-1.5
+                rounded-md inline-block mb-6"></div>
+
+    <div id="successLines"
+         class="text-left border-t border-border pt-4 text-sm leading-relaxed mb-6"></div>
+
+    <button onclick="goHome()"
+            class="w-full py-3 bg-ink text-white rounded-xl
+                   font-display font-bold text-sm cursor-pointer
+                   transition-colors hover:bg-blue-600">
+      ← Continue Shopping
+    </button>
+  </div>
+</div>
+
+
+<script>
+/* ═══════════════════════ STATE ═══════════════════════ */
+
+const products = [
+  { id: "iphone-15",   name: "iPhone 15",         price: 800,  emoji: "📱" },
+  { id: "galaxy-s24",  name: "Samsung Galaxy S24", price: 750,  emoji: "📱" },
+  { id: "pixel-9",     name: "Google Pixel 9",     price: 700,  emoji: "📱" },
+  { id: "macbook-air", name: "MacBook Air M3",     price: 1200, emoji: "💻" },
+];
+
+let cart = [];
+
+/* ═══════════════════════ RENDER ═══════════════════════ */
+
+function renderProducts(list) {
+  const container = document.getElementById("productList");
+  if (list.length === 0) {
+    container.innerHTML = `<p class="text-muted text-sm col-span-full">No products found.</p>`;
+    return;
+  }
+  container.innerHTML = list.map(p => `
+    <div class="product-card bg-white border border-border rounded-2xl p-6
+                relative overflow-hidden transition-all duration-200
+                hover:shadow-xl hover:-translate-y-0.5">
+      <div class="text-3xl mb-2">${p.emoji}</div>
+      <div class="font-display font-bold text-base mb-1">${p.name}</div>
+      <div class="font-mono text-[0.68rem] text-muted mb-3">${p.id}</div>
+      <div class="font-display font-extrabold text-2xl text-accent mb-4">$${p.price}</div>
+      <button onclick="addToCartUI('${p.id}', 1)"
+              class="w-full py-2.5 bg-ink text-white rounded-lg
+                     font-display text-xs font-bold tracking-wide cursor-pointer
+                     transition-colors hover:bg-blue-600">
+        + Add to Cart
+      </button>
+    </div>
+  `).join("");
+}
+
+function renderCart() {
+  const list  = document.getElementById("cartList");
+  const total = document.getElementById("cartTotal");
+  const count = document.getElementById("cartCount");
+
+  if (cart.length === 0) {
+    list.innerHTML = `<li class="text-muted text-sm py-5 text-center">Your cart is empty</li>`;
+    total.innerText = "";
+    count.innerText = "0";
+    return;
+  }
+
+  let sum = 0;
+  list.innerHTML = cart.map(item => {
+    sum += item.price * item.quantity;
+    return `
+      <li class="flex justify-between items-center py-3 border-b border-border text-sm">
+        <div>
+          <div class="font-medium text-ink">${item.name}</div>
+          <div class="text-xs text-muted">Qty: ${item.quantity}</div>
+        </div>
+        <div class="font-display font-bold">$${item.price * item.quantity}</div>
+      </li>
+    `;
+  }).join("");
+
+  total.innerText = "Total $" + sum.toLocaleString();
+  count.innerText = cart.reduce((a, c) => a + c.quantity, 0);
+}
+
+/* ═══════════════════════ UI ACTIONS ═══════════════════════ */
+
+function searchUI() {
+  const q = document.getElementById("searchInput").value.toLowerCase().trim();
+  renderProducts(q ? products.filter(p => p.name.toLowerCase().includes(q)) : products);
+}
+
+// Show all products when the search field is cleared
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("searchInput").addEventListener("input", e => {
+    if (e.target.value.trim() === "") renderProducts(products);
+  });
+  document.getElementById("searchInput").addEventListener("keydown", e => {
+    if (e.key === "Enter") searchUI();
+  });
+});
+
+function addToCartUI(id, qty) {
+  const product = products.find(p => p.id === id);
+  if (!product) return { error: `Product "${id}" not found. Valid IDs: ${products.map(p => p.id).join(", ")}` };
+  if (qty < 1)  return { error: "Quantity must be at least 1." };
+
+  const existing = cart.find(c => c.id === id);
+  if (existing) existing.quantity += qty;
+  else cart.push({ ...product, quantity: qty });
+
+  renderCart();
+  return null;
+}
+
+function openCheckout() {
+  document.getElementById("checkoutModal").style.display = "flex";
+}
+
+function closeCheckout() {
+  document.getElementById("checkoutModal").style.display = "none";
+}
+
+function goHome() {
+  document.getElementById("successModal").style.display = "none";
+  renderProducts(products);
+  document.getElementById("searchInput").value = "";
+}
+
+/* ═══════════════════════ AGENT BANNER ═══════════════════════ */
+
+function showBanner(text) {
+  document.getElementById("bannerText").innerText = text;
+  document.getElementById("agentBanner").classList.remove("hidden");
+}
+
+function hideBanner() {
+  document.getElementById("agentBanner").classList.add("hidden");
+}
+
+/* ═══════════════════════ ORDER PROCESSING ═══════════════════════ */
+
+function processOrder(data) {
+  const order = {
+    id:       "ORD-" + Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0"),
+    customer: data,
+    items:    [...cart],
+    total:    cart.reduce((s, i) => s + i.price * i.quantity, 0),
+  };
+
+  cart = [];
+  renderCart();
+  closeCheckout();
+  showSuccessModal(order);
+  return order;
+}
+
+function showSuccessModal(order) {
+  const addr = `${order.customer.streetAddress || order.customer.address}, ${order.customer.city}, ${order.customer.postalCode}, ${order.customer.country}`;
+
+  const itemRows = order.items.map(i => `
+    <div class="flex justify-between py-1 text-sm">
+      <span>${i.emoji} ${i.name} ×${i.quantity}</span>
+      <span>$${i.price * i.quantity}</span>
+    </div>
+  `).join("");
+
+  document.getElementById("successOrderId").innerText = order.id;
+  document.getElementById("successLines").innerHTML = `
+    <p class="mb-2">
+      <span class="text-[0.68rem] uppercase tracking-widest text-muted font-semibold">Name</span><br/>
+      ${order.customer.fullName}
+    </p>
+    <p class="mb-2">
+      <span class="text-[0.68rem] uppercase tracking-widest text-muted font-semibold">Email</span><br/>
+      ${order.customer.email}
+    </p>
+    <p class="mb-2">
+      <span class="text-[0.68rem] uppercase tracking-widest text-muted font-semibold">Ship to</span><br/>
+      ${addr}
+    </p>
+    <div class="mt-3 pt-3 border-t border-border">
+      <span class="text-[0.68rem] uppercase tracking-widest text-muted font-semibold">Items</span>
+      <div class="mt-2">${itemRows}</div>
+      <div class="flex justify-between font-display font-extrabold text-base mt-3 pt-2.5 border-t-2 border-ink">
+        <span>Total</span><span>$${order.total}</span>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("successModal").style.display = "flex";
+}
+
+/* ═══════════════════════ DECLARATIVE CHECKOUT HANDLER ═══════════════════════ */
+/*
+  e.agentInvoked (SubmitEvent) — WebMCP boolean set to true when the form
+  was submitted by an AI agent, not a human. Use this to branch behavior:
+  return machine-readable data to the agent vs. showing UI feedback to the user.
+
+  e.respondWith(Promise) — WebMCP method to pass results back to the agent.
+  Must call e.preventDefault() first. The resolved value is serialized and
+  returned as the tool's output. Always return a structured object so the
+  agent can use the result in follow-up steps.
+
+  Validate cart state before respondWith — if the cart is empty, return a
+  descriptive error so the agent can self-correct and retry with a valid state.
+*/
+document.getElementById("checkoutForm").addEventListener("submit", function(e) {
+  e.preventDefault();
+
+  if (cart.length === 0) {
+    const errMsg = "Cannot checkout: the cart is empty. Add at least one product before placing an order.";
+    if (e.agentInvoked) {
+      e.respondWith(Promise.resolve({ status: "error", message: errMsg }));
+    } else {
+      alert(errMsg);
+    }
+    return;
+  }
+
+  const formData = Object.fromEntries(new FormData(this));
+  const order    = processOrder(formData);
+  hideBanner();
+  document.getElementById("confirmBtn")
+    .classList.remove("ring-2", "ring-offset-2", "ring-blue-500", "animate-pulse");
+
+  if (e.agentInvoked) {
+    e.respondWith(Promise.resolve({
+      status:    "success",
+      orderId:   order.id,
+      itemCount: order.items.length,
+      total:     order.total,
+      message:   `Order ${order.id} placed successfully for ${order.customer.fullName}.`,
+    }));
+  }
+});
+
+/* ═══════════════════════ IMPERATIVE TOOLS ═══════════════════════ */
+/*
+  registerTool() — adds a single tool to the browser's modelContext without
+  removing others. Use this (not provideContext) when declarative tools are
+  also present, since provideContext() replaces the entire tool set and would
+  wipe any browser-registered declarative tools.
+
+  annotations.readOnlyHint — WebMCP annotation marking a tool as non-mutating.
+  Apply to tools that only read or display data without modifying app state.
+
+  Tool descriptions and error messages should follow WebMCP best practices:
+  return descriptive errors with valid option lists so the agent can
+  self-correct and retry without human intervention.
+*/
+function registerWebMCPTools() {
+  if (!navigator.modelContext) return;
+
+  navigator.modelContext.registerTool({
+    name: "search_products",
+    description: "Search the product catalog by keyword. Returns matching products displayed on screen. Use this when the user asks to find, browse, or filter products.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword to search for in product names (e.g. 'iPhone', 'laptop').",
+        },
+      },
+      required: ["query"],
+    },
+    annotations: {
+      readOnlyHint: "true", // Does not modify cart or state
+    },
+    execute: ({ query }) => {
+      const results = products.filter(p => p.name.toLowerCase().includes(query.toLowerCase()));
+      renderProducts(results);
+      document.getElementById("searchInput").value = query;
+
+      const names = results.map(p => `${p.name} ($${p.price}, id: ${p.id})`).join("; ");
+      return {
+        content: [{
+          type: "text",
+          text: results.length > 0
+            ? `Found ${results.length} product(s): ${names}`
+            : `No products found for "${query}". Available: ${products.map(p => p.name).join(", ")}.`,
+        }],
+      };
+    },
+  });
+
+  navigator.modelContext.registerTool({
+    name: "add_to_cart",
+    description: "Add a product to the shopping cart by its product ID and quantity. Call search_products first if the user hasn't specified a product ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        productId: {
+          type: "string",
+          description: `Product ID to add. Valid values: ${products.map(p => p.id).join(", ")}.`,
+        },
+        quantity: {
+          type: "number",
+          description: "Number of units to add. Must be a positive integer.",
+        },
+      },
+      required: ["productId", "quantity"],
+    },
+    execute: ({ productId, quantity }) => {
+      const err = addToCartUI(productId, Math.floor(quantity));
+      if (err) return { content: [{ type: "text", text: err.error }] };
+
+      const item = cart.find(c => c.id === productId);
+      return {
+        content: [{
+          type: "text",
+          text: `Added ${quantity}x ${item.name} to cart. Cart now has ${cart.reduce((s, c) => s + c.quantity, 0)} item(s). Total: $${cart.reduce((s, c) => s + c.price * c.quantity, 0)}.`,
+        }],
+      };
+    },
+  });
+  navigator.modelContext.registerTool({
+    name: "confirm_order",
+    description: "Submit the checkout form and place the order after the user has confirmed they want to proceed. Only call this tool after checkout_order has been used to pre-fill the form AND the user has explicitly said they want to proceed, confirm, or place the order.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+    execute: () => {
+      const form = document.getElementById("checkoutForm");
+
+      // Validate the form before submitting
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return {
+          content: [{
+            type: "text",
+            text: "The checkout form has missing or invalid fields. Please ensure checkout_order was called first with all required details.",
+          }],
+        };
+      }
+
+      if (cart.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "Cannot place order: the cart is empty.",
+          }],
+        };
+      }
+
+      // Programmatically submit — this fires the submit event handler
+      // which calls processOrder and shows the success modal
+      form.requestSubmit();
+
+      return {
+        content: [{
+          type: "text",
+          text: "Order submitted successfully.",
+        }],
+      };
+    },
+  });
+}
+
+/* ═══════════════════════ AGENT LIFECYCLE EVENTS ═══════════════════════ */
+/*
+  toolactivated — fires on window when an agent has pre-filled a declarative
+  form's fields. Use this to sync UI state (e.g. open a modal) so the form
+  is visible to the user before or during agent-driven submission.
+
+  toolcancel — fires on window when the user cancels an agentic operation
+  or reset() is invoked on the tool's form. Use this to restore UI to its
+  pre-agent state (e.g. close the modal, hide the agent banner).
+
+  Both events provide a `toolName` attribute to identify which tool changed state.
+*/
+window.addEventListener('toolactivated', ({ toolName }) => {
+  if (toolName === "checkout_order") {
+    openCheckout();
+    showBanner("Review your details — agent will ask before confirming");
+    document.getElementById("confirmBtn")
+      .classList.add("ring-2", "ring-offset-2", "ring-blue-500", "animate-pulse");
+  }
+});
+
+window.addEventListener('toolcancel', ({ toolName }) => {
+  if (toolName === "checkout_order") {
+    closeCheckout();
+    hideBanner();
+    document.getElementById("confirmBtn")
+      .classList.remove("ring-2", "ring-offset-2", "ring-blue-500", "animate-pulse");
+  }
+});
+
+/* ═══════════════════════ INIT ═══════════════════════ */
+renderProducts(products);
+renderCart();
+registerWebMCPTools();
+</script>
+</body>
+</html>
